@@ -1,0 +1,197 @@
+// this is the bamazon js file
+
+
+// pulls the libraries 
+var inquirer = require("inquirer");
+var mysql = require("mysql");
+
+
+// points about connection data 
+
+var connection = mysql.createConnection({
+    host: "localhost",
+    port: 4000,
+    user: "root",
+    password: "Root!",
+    database: "bamazon_db"
+});
+
+var divider = "\n_____________________________________________________\n"
+
+
+
+
+
+openConnection();
+
+function openConnection() {
+    connection.connect(function (err) {
+        if (err) throw err;
+        console.log("connected as id " + connection.threadId + divider);
+        showStock();
+    });
+}
+
+function showStock() {
+    connection.query("SELECT * FROM products", function (err, res) {
+        if (err) throw err;
+        var iChoices = [];
+        console.log("Below is a list of our Inventory:");
+
+
+        for (var i = 0; i < res.length; i++) {
+            var id = res[i].item_id;
+            var pn = res[i].product_name;
+            var price = res[i].price;
+
+            iChoices.push(id + " - " + pn);
+            console.log("ID: " + id + " | Product: " + pn + " | Price: $" + price);
+        }
+        console.log(divider);
+        // This should break everything :(
+        // connection.end();        
+        placeOrder(iChoices);
+    });
+}
+
+function placeOrder(choice) {
+    inquirer.prompt(
+        [{
+            type: "list",
+            message: "Which product would you like to purchase?",
+            choices: choice,
+            name: "choice"
+        }]
+    ).then(function (res) {
+
+        var choice = res.choice.split(" - ", 2);
+        var id = choice[0];
+        var product = choice[1];
+
+        console.log(product + " - Great Choice.")
+        inquirer.prompt([{
+            type: "input",
+            message: "How many many would you like to order?",
+            name: "count"
+        }]).then(function (res) {
+            var requestedQuant = res.count;
+            console.log("Filling your order...");
+            // check to see if enough stock exists
+            getInventory(id, requestedQuant);
+
+        })
+    })
+}
+
+
+function getInventory(itemID, requestedQuant) {
+    var availableQuant;
+    var query = connection.query(
+        "SELECT stock_quantity FROM products WHERE ?", {
+            item_id: itemID
+        },
+        function (err, res) {
+            if (err) throw err;
+            availableQuant = res[0].stock_quantity;
+            checkOrder(itemID, requestedQuant, availableQuant)
+        }
+    );
+}
+
+function getPrice(itemID, rQuant) {
+    var price;
+    var query = connection.query(
+        "SELECT price FROM products WHERE ?", {
+            item_id: itemID
+        },
+        function (err, res) {
+            if (err) throw err;
+            unitCost = res[0].price;
+            var price = unitCost * rQuant;
+            updateProductSales(itemID, price)
+            console.log("Thank you for purchasing. Your order total is $" + price + ".");
+        }
+    );
+
+}
+
+
+function checkOrder(id, rQuant, aQuant) {
+    if (aQuant < rQuant) {
+        console.log("We're sorry your order can not be completed. Please try again with fewer items in your cart. \nCurrent Stock: " + aQuant);
+        console.log(divider);
+        cont();
+    } else {
+        aQuant = aQuant - rQuant
+        // This can happen async since nothing is getting returned
+        UpdateInventory(id, aQuant);
+        getPrice(id, rQuant);
+
+    }
+}
+
+
+function UpdateInventory(id, aQuant) {
+    // The right way to do this is to get the value and update the total. This prevents very slow race conditions....The lazy way is to just pass in the new value...which is what im doing.
+    var query = connection.query(
+        "UPDATE products SET ? WHERE ?", [{
+                stock_quantity: aQuant
+            },
+            {
+                item_id: id
+            }
+        ],
+        function (err, res) {
+            if (err) throw err;
+        }
+    );
+}
+
+
+function updateProductSales(itemID, price) {
+
+    var query = connection.query(
+        "SELECT product_sales FROM products WHERE ?", {
+            item_id: itemID
+        },
+        function (err, res) {
+            if (err) throw err;
+            var currps = parseFloat(res[0].product_sales);
+            ps = parseFloat(currps) + parseFloat(price);
+            var query = connection.query(
+                "UPDATE products SET ? WHERE ?", [{
+                        product_sales: ps
+                    },
+                    {
+                        item_id: itemID
+                    }
+                ],
+                function (err, res) {
+                    if (err) throw err;
+                    // reset the experience
+                    cont();
+                }
+            );
+        })
+
+}
+
+
+function cont() {
+    console.log(divider);
+    inquirer
+        .prompt({
+            type: "confirm",
+            message: "Would you like to perform another action?",
+            name: "confirm",
+            default: true
+        })
+        .then(function (res) {
+            if (res.confirm) {
+                showStock()
+            } else {
+                console.log("\nPlease come back when you are ready. \n");
+                process.exit();
+            }
+        })
+};
